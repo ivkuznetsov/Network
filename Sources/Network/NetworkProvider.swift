@@ -87,7 +87,7 @@ public class NetworkProvider {
                 task.cancel()
             }
             if wSelf.logging {
-                print("Sending \(request.parameters.endpoint ?? "")\nparameters: \((request.parameters.parameters ?? [:]) as NSDictionary)\npayload: \((request.parameters.payload ?? [:]) as NSDictionary)")
+                print("Sending \(urlRequest.url?.absoluteString ?? "")\nparameters: \((request.parameters.parameters ?? [:]) as NSDictionary)\npayload: \((request.parameters.payload ?? [:]) as NSDictionary)")
             }
             task.resume()
         }.success { [weak self] result in

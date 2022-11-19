@@ -74,11 +74,10 @@ public class BaseRequest {
     }
     
     func urlRequest(baseURL: URL) -> URLRequest {
-        let url: URL
+        var url: URL = baseURL
+        
         if let endpoint = parameters.endpoint {
-            url = URL(string: endpoint, relativeTo: baseURL)!
-        } else {
-            url = baseURL
+            url = url.appendingPathComponent(endpoint)
         }
         
         var urlComponents = URLComponents(url: url, resolvingAgainstBaseURL: true)!
