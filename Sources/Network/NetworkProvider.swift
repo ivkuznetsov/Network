@@ -94,6 +94,10 @@ public class NetworkProvider {
             if self?.logging == true {
                 print("Success \(request), response: \(String(describing: result))")
             }
+        }.fail { [weak self] error in
+            if self?.logging == true {
+                print("Failed \(request), error: \(error.localizedDescription)")
+            }
         }
         
         return work.seize { [weak self] error in
