@@ -87,16 +87,16 @@ public class NetworkProvider {
                 task.cancel()
             }
             if wSelf.logging {
-                print("Sending \(request)\nparameters: \((request.parameters.parameters ?? [:]) as NSDictionary)\npayload: \((request.parameters.payload ?? [:]) as NSDictionary)")
+                print("Sending \(request.parameters.endpoint ?? "")\nparameters: \((request.parameters.parameters ?? [:]) as NSDictionary)\npayload: \((request.parameters.payload ?? [:]) as NSDictionary)")
             }
             task.resume()
         }.success { [weak self] result in
             if self?.logging == true {
-                print("Success \(request), response: \(String(describing: result))")
+                print("Success \(request.parameters.endpoint ?? ""), response: \(String(describing: result))")
             }
         }.fail { [weak self] error in
             if self?.logging == true {
-                print("Failed \(request), error: \(error.localizedDescription)")
+                print("Failed \(request.parameters.endpoint ?? ""), error: \(error.localizedDescription)")
             }
         }
         
