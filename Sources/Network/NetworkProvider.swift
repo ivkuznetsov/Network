@@ -66,15 +66,37 @@ public class NetworkProvider {
     
     public func load<T: BaseRequest & WithResponseType>(_ request: T, customToken: String? = nil) -> Work<T.ResponseType> {
         
-        RequestWork(request: request,
-                    baseURL: baseURL,
-                    session: session,
-                    authorize: { [weak self] urlRequest in
-                        if let token = customToken ?? self?.auth?.token?.auth {
-                            self?.auth?.authorize(urlRequest, token)
-                        }
-                    },
-                    logging: logging).seize { [weak self] error in
+        let work = AsyncWork<T.ResponseType> { [weak self] work in
+            guard let wSelf = self else {
+                work.reject(RunError.cancelled)
+                return
+            }
+            
+            let urlRequest = request.urlRequest(baseURL: wSelf.baseURL)
+            if request.parameters.auth, let auth = wSelf.auth, let token = customToken ?? auth.token?.auth {
+                auth.authorize(urlRequest, token)
+            }
+            let task = request.task(work, session: wSelf.session, request: urlRequest)
+            
+            let observer = task.progress.observe(\.fractionCompleted, changeHandler: { [weak work] progress, _ in
+                work?.progress.update(progress.fractionCompleted)
+            })
+            
+            work.addCompletion {
+                _ = observer // retain observer
+                task.cancel()
+            }
+            if wSelf.logging {
+                print("Sending \(request)\nparameters: \((request.parameters.parameters ?? [:]) as NSDictionary)\npayload: \((request.parameters.payload ?? [:]) as NSDictionary)")
+            }
+            task.resume()
+        }.success { [weak self] result in
+            if self?.logging == true {
+                print("Success \(request), response: \(String(describing: result))")
+            }
+        }
+        
+        return work.seize { [weak self] error in
             
             if request.parameters.auth,
                let wSelf = self,
@@ -88,7 +110,7 @@ public class NetworkProvider {
                    let token = auth.token?.refresh {
                     reauth = refreshToken(token).success {
                         auth.update(token: $0)
-                    }.seize { _ in
+                    }.removeType().seize { _ in
                         wSelf.failedToAuth(auth)
                     }
                 } else {
