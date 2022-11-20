@@ -15,7 +15,7 @@ public struct Token: Codable {
     }
 }
 
-public class NetworkProvider {
+open class NetworkProvider {
     
     public struct AuthOptions {
         
@@ -64,7 +64,7 @@ public class NetworkProvider {
         self.logging = logging
     }
     
-    public func load<T: BaseRequest & WithResponseType>(_ request: T, customToken: String? = nil) -> Work<T.ResponseType> {
+    open func load<T: BaseRequest & WithResponseType>(_ request: T, customToken: String? = nil) -> Work<T.ResponseType> {
         
         let work = AsyncWork<T.ResponseType> { [weak self] work in
             guard let wSelf = self else {
