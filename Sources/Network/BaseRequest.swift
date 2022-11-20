@@ -67,11 +67,12 @@ open class BaseRequest {
         }
         
         if let data = data {
-            let reponseObject = try JSONSerialization.jsonObject(with: data, options: [])
+            let responseObject = try JSONSerialization.jsonObject(with: data, options: [])
             
             if let response = response as? HTTPURLResponse {
-                try validateBody?(response, reponseObject as? [String : Any])
+                try validateBody?(response, responseObject as? [String : Any])
             }
+            return responseObject
         }
         return nil
     }
