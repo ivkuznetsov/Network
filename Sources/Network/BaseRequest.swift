@@ -43,9 +43,10 @@ public struct RequestParameters {
     }
 }
 
-public class BaseRequest {
+open class BaseRequest {
     
     let parameters: RequestParameters
+    var validateBody: BodyValidation?
     
     public init(_ parameters: RequestParameters) {
         self.parameters = parameters
@@ -59,18 +60,20 @@ public class BaseRequest {
     }
     
     @discardableResult
-    func validate(response: URLResponse?, error: Error?) throws -> HTTPURLResponse {
+    func validate(response: URLResponse?, data: Data?, error: Error?) throws -> Any? {
         if let error = error {
             print("Fail \(String(describing: self)) with error: \(error.localizedDescription)")
             throw error
         }
         
-        guard let response = response as? HTTPURLResponse else {
-            let error = RunError.custom("Missing Response")
-            print("Fail \(String(describing: self)) with error: \(error.localizedDescription)")
-            throw error
+        if let data = data {
+            let reponseObject = try JSONSerialization.jsonObject(with: data, options: [])
+            
+            if let response = response as? HTTPURLResponse {
+                try validateBody?(response, reponseObject as? [String : Any])
+            }
         }
-        return response
+        return nil
     }
     
     func urlRequest(baseURL: URL) -> URLRequest {

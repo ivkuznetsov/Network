@@ -5,13 +5,13 @@
 import Foundation
 import CommonUtils
 
-public class SimpleRequest: BaseRequest, WithResponseType {
+open class SimpleRequest: BaseRequest, WithResponseType {
     public typealias ResponseType = Void
     
     public func task(_ work: Work<Void>, session: URLSession, request: URLRequest) -> URLSessionTask {
         session.dataTask(with: request) { [weak self] data, response, error in
             do {
-                try self?.validate(response: response, error: error)
+                try self?.validate(response: response, data: data, error: error)
                 work.resolve(())
             } catch {
                 work.reject(error)
@@ -20,7 +20,7 @@ public class SimpleRequest: BaseRequest, WithResponseType {
     }
 }
 
-public class UploadRequest: SimpleRequest {
+open class UploadRequest: SimpleRequest {
     
     let uploadData: Data
     
@@ -30,9 +30,9 @@ public class UploadRequest: SimpleRequest {
     }
     
     public override func task(_ work: Work<Void>, session: URLSession, request: URLRequest) -> URLSessionTask {
-        session.uploadTask(with: request, from: uploadData) { [weak self] _, response, error in
+        session.uploadTask(with: request, from: uploadData) { [weak self] data, response, error in
             do {
-                try self?.validate(response: response, error: error)
+                try self?.validate(response: response, data: data, error: error)
                 work.resolve(())
             } catch {
                 work.reject(error)
@@ -41,7 +41,7 @@ public class UploadRequest: SimpleRequest {
     }
 }
 
-public class UploadFileRequest: SimpleRequest {
+open class UploadFileRequest: SimpleRequest {
     
     let fileURL: URL
     
@@ -51,9 +51,9 @@ public class UploadFileRequest: SimpleRequest {
     }
     
     public override func task(_ work: Work<Void>, session: URLSession, request: URLRequest) -> URLSessionTask {
-        session.uploadTask(with: request, fromFile: fileURL) { [weak self] _, response, error in
+        session.uploadTask(with: request, fromFile: fileURL) { [weak self] data, response, error in
             do {
-                try self?.validate(response: response, error: error)
+                try self?.validate(response: response, data: data, error: error)
                 work.resolve(())
             } catch {
                 work.reject(error)
@@ -62,7 +62,7 @@ public class UploadFileRequest: SimpleRequest {
     }
 }
 
-public class DownloadRequest: BaseRequest, WithResponseType {
+open class DownloadRequest: BaseRequest, WithResponseType {
     public typealias ResponseType = URL
     
     public func task(_ work: Work<URL>, session: URLSession, request: URLRequest) -> URLSessionTask {
@@ -76,18 +76,11 @@ public class DownloadRequest: BaseRequest, WithResponseType {
     }
 }
 
-public class SerializableRequest<T>: BaseRequest, WithResponseType {
+open class SerializableRequest<T>: BaseRequest, WithResponseType {
     public typealias ResponseType = T
     
-    public let validate: ((T, HTTPURLResponse) throws -> ())?
-    
-    public init(parameters: RequestParameters, validate: ((T, HTTPURLResponse) throws -> ())? = nil) {
-        self.validate = validate
-        super.init(parameters)
-    }
-    
-    public func convert(_ data: Data) throws -> T {
-        if let result = try JSONSerialization.jsonObject(with: data, options: []) as? T {
+    public func convert(_ jsonObject: Any) throws -> T {
+        if let result = jsonObject as? T {
             return result
         }
         throw RunError.custom("Invalid response type")
@@ -98,15 +91,12 @@ public class SerializableRequest<T>: BaseRequest, WithResponseType {
             guard let wSelf = self else { return }
             
             do {
-                let httpResponse = try wSelf.validate(response: response, error: error)
+                let jsonObject = try wSelf.validate(response: response, data: data, error: error)
             
-                guard let data = data else {
+                guard let jsonObject = jsonObject else {
                     throw RunError.custom("No data in response")
                 }
-                let result = try wSelf.convert(data)
-                
-                try wSelf.validate?(result, httpResponse)
-                
+                let result = try wSelf.convert(jsonObject)
                 work?.resolve(result)
             } catch {
                 work?.reject(error)
@@ -123,11 +113,11 @@ public protocol ResponsePage {
     init?(dict: [String : Any])
 }
 
-public class PageRequest<T: ResponsePage>: SerializableRequest<T> {
+open class PageRequest<T: ResponsePage>: SerializableRequest<T> {
     public typealias ResponseType = ResponsePage
     
-    public override func convert(_ data: Data) throws -> T {
-        if let result = try JSONSerialization.jsonObject(with: data, options: []) as? [String : Any],
+    public override func convert(_ jsonObject: Any) throws -> T {
+        if let result = jsonObject as? [String : Any],
            let page = T(dict: result) {
             return page
         }

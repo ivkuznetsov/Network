@@ -15,6 +15,8 @@ public struct Token: Codable {
     }
 }
 
+public typealias BodyValidation = (HTTPURLResponse, _ body: [String : Any]?) throws -> ()
+
 open class NetworkProvider {
     
     public struct AuthOptions {
@@ -51,15 +53,18 @@ open class NetworkProvider {
     
     private let baseURL: URL
     private let auth: AuthOptions?
+    private let validateBody: BodyValidation
     private let session: URLSession
     private let logging: Bool
     
     public init(baseURL: URL,
                 auth: AuthOptions? = nil,
+                validateBody: @escaping BodyValidation,
                 session: URLSession = URLSession.shared,
                 logging: Bool = true) {
         self.baseURL = baseURL
         self.auth = auth
+        self.validateBody = validateBody
         self.session = session
         self.logging = logging
     }
@@ -71,6 +76,7 @@ open class NetworkProvider {
                 work.reject(RunError.cancelled)
                 return
             }
+            request.validateBody = wSelf.validateBody
             
             let urlRequest = request.urlRequest(baseURL: wSelf.baseURL)
             if request.parameters.auth, let auth = wSelf.auth, let token = customToken ?? auth.token?.auth {
