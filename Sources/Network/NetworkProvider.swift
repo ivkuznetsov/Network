@@ -23,13 +23,13 @@ open class NetworkProvider {
         
         let unauthorized: (@escaping (Error?)->())->()
         let unauthCodes: [Int]
-        let authorize: (URLRequest, String)->()
+        let authorize: (inout URLRequest, String)->()
         let refreshToken: ((String)->Work<Token>)?
         let keychainService: String
         
         public init(unauthorized: @escaping (@escaping (Error?)->())->(),
                     unauthCodes: [Int] = [401, 403],
-                    authorize: @escaping (URLRequest, String)->(),
+                    authorize: @escaping (inout URLRequest, String)->(),
                     refreshToken: ((String)->Work<Token>)? = nil,
                     keychainService: String) {
             self.unauthorized = unauthorized
@@ -53,18 +53,21 @@ open class NetworkProvider {
     
     private let baseURL: URL
     private let auth: AuthOptions?
-    private let validateBody: BodyValidation
+    private let validateBody: BodyValidation?
     private let session: URLSession
     private let logging: Bool
+    private let willSend: ((inout URLRequest)->())?
     
     public init(baseURL: URL,
                 auth: AuthOptions? = nil,
-                validateBody: @escaping BodyValidation,
+                willSend: ((inout URLRequest)->())? = nil,
+                validateBody: BodyValidation? = nil,
                 session: URLSession = URLSession.shared,
                 logging: Bool = true) {
         self.baseURL = baseURL
         self.auth = auth
         self.validateBody = validateBody
+        self.willSend = willSend
         self.session = session
         self.logging = logging
     }
@@ -78,20 +81,17 @@ open class NetworkProvider {
             }
             request.validateBody = wSelf.validateBody
             
-            let urlRequest = request.urlRequest(baseURL: wSelf.baseURL)
+            var urlRequest = request.urlRequest(baseURL: wSelf.baseURL)
             if request.parameters.auth, let auth = wSelf.auth, let token = customToken ?? auth.token?.auth {
-                auth.authorize(urlRequest, token)
+                auth.authorize(&urlRequest, token)
             }
+            wSelf.willSend?(&urlRequest)
             let task = request.task(work, session: wSelf.session, request: urlRequest)
             
-            let observer = task.progress.observe(\.fractionCompleted, changeHandler: { [weak work] progress, _ in
+            task.progress.observe(\.fractionCompleted, changeHandler: { [weak work] progress, _ in
                 work?.progress.update(progress.fractionCompleted)
-            })
+            }).retained(by: work)
             
-            work.addCompletion {
-                _ = observer // retain observer
-                task.cancel()
-            }
             if wSelf.logging {
                 print("Sending \(urlRequest.url?.absoluteString ?? "")\nparameters: \((request.parameters.parameters ?? [:]) as NSDictionary)\npayload: \((request.parameters.payload ?? [:]) as NSDictionary)")
             }

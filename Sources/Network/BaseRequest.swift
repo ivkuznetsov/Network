@@ -29,14 +29,14 @@ public struct RequestParameters {
     
     public init(endpoint: String,
                 method: HTTPMethod = .get,
-                paramenters: [String : Any]? = nil,
+                parameters: [String : Any]? = nil,
                 headers: [String:String] = ["Content-Type": "application/json"],
                 payload: [String : Any]? = nil,
                 auth: Bool = true) {
         
         self.endpoint = endpoint
         self.method = method
-        self.parameters = paramenters
+        self.parameters = parameters
         self.payload = payload
         self.headers = headers
         self.auth = auth
