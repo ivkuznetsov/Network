@@ -8,20 +8,18 @@ import CommonUtils
 open class SimpleRequest: BaseRequest, WithResponseType {
     public typealias ResponseType = Void
     
-    public func task(_ work: Work<Void>, session: URLSession, request: URLRequest) -> URLSessionTask {
-        session.dataTask(with: request) { [weak self] data, response, error in
-            do {
-                try self?.validate(response: response, data: data, error: error)
-                work.resolve(())
-            } catch {
-                work.reject(error)
-            }
+    public func load(session: URLSession, request: URLRequest, delegate: URLSessionTaskDelegate) async throws -> () {
+        let result: (Data, URLResponse)
+        if #available(iOS 15, *) {
+            result = try await session.data(for: request, delegate: delegate)
+        } else {
+            result = try await session.data(for: request)
         }
+        try validate(response: result.1, data: result.0)
     }
 }
 
 open class UploadRequest: SimpleRequest {
-    
     let uploadData: Data
     
     public init(data: Data, parameters: RequestParameters) {
@@ -29,20 +27,23 @@ open class UploadRequest: SimpleRequest {
         super.init(parameters)
     }
     
-    public override func task(_ work: Work<Void>, session: URLSession, request: URLRequest) -> URLSessionTask {
-        session.uploadTask(with: request, from: uploadData) { [weak self] data, response, error in
-            do {
-                try self?.validate(response: response, data: data, error: error)
-                work.resolve(())
-            } catch {
-                work.reject(error)
-            }
+    public func load(session: URLSession, request: URLRequest) async throws -> () {
+        let result = try await session.data(for: request)
+        try validate(response: result.1, data: result.0)
+    }
+    
+    public override func load(session: URLSession, request: URLRequest, delegate: URLSessionTaskDelegate) async throws -> () {
+        let result: (Data, URLResponse)
+        if #available(iOS 15, *) {
+            result = try await session.upload(for: request, from: uploadData, delegate: delegate)
+        } else {
+            result = try await session.upload(for: request, from: uploadData)
         }
+        try validate(response: result.1, data: result.0)
     }
 }
 
 open class UploadFileRequest: SimpleRequest {
-    
     let fileURL: URL
     
     public init(fileURL: URL, parameters: RequestParameters) {
@@ -50,29 +51,25 @@ open class UploadFileRequest: SimpleRequest {
         super.init(parameters)
     }
     
-    public override func task(_ work: Work<Void>, session: URLSession, request: URLRequest) -> URLSessionTask {
-        session.uploadTask(with: request, fromFile: fileURL) { [weak self] data, response, error in
-            do {
-                try self?.validate(response: response, data: data, error: error)
-                work.resolve(())
-            } catch {
-                work.reject(error)
-            }
+    public override func load(session: URLSession, request: URLRequest, delegate: URLSessionTaskDelegate) async throws -> () {
+        let result: (Data, URLResponse)
+        if #available(iOS 15, *) {
+            result = try await session.upload(for: request, fromFile: fileURL, delegate: delegate)
+        } else {
+            result = try await session.upload(for: request, fromFile: fileURL)
         }
+        try validate(response: result.1, data: result.0)
     }
 }
 
+@available(iOS 15, *)
 open class DownloadRequest: BaseRequest, WithResponseType {
     public typealias ResponseType = URL
     
-    public func task(_ work: Work<URL>, session: URLSession, request: URLRequest) -> URLSessionTask {
-        session.downloadTask(with: request) { [weak work] url, response, error in
-            if let url = url {
-                work?.resolve(url)
-            } else {
-                work?.reject(error ?? RunError.custom("Invalid response"))
-            }
-        }
+    public func load(session: URLSession, request: URLRequest, delegate: URLSessionTaskDelegate) async throws -> URL {
+        let result = try await session.download(for: request, delegate: delegate)
+        try validate(response: result.1, data: nil)
+        return result.0
     }
 }
 
@@ -86,22 +83,19 @@ open class SerializableRequest<T>: BaseRequest, WithResponseType {
         throw RunError.custom("Invalid response type")
     }
     
-    public func task(_ work: Work<T>, session: URLSession, request: URLRequest) -> URLSessionTask {
-        session.dataTask(with: request) { [weak work, weak self] data, response, error in
-            guard let wSelf = self else { return }
-            
-            do {
-                let jsonObject = try wSelf.validate(response: response, data: data, error: error)
-            
-                guard let jsonObject = jsonObject else {
-                    throw RunError.custom("No data in response")
-                }
-                let result = try wSelf.convert(jsonObject)
-                work?.resolve(result)
-            } catch {
-                work?.reject(error)
-            }
+    public func load(session: URLSession, request: URLRequest, delegate: URLSessionTaskDelegate) async throws -> T {
+        let result: (Data, URLResponse)
+        if #available(iOS 15, *) {
+            result = try await session.data(for: request, delegate: delegate)
+        } else {
+            result = try await session.data(for: request)
         }
+        let jsonObject = try validate(response: result.1, data: result.0)
+        
+        guard let jsonObject = jsonObject else {
+            throw RunError.custom("No data in response")
+        }
+        return try convert(jsonObject)
     }
 }
 

@@ -15,7 +15,7 @@ public enum HTTPMethod: String {
 public protocol WithResponseType: AnyObject {
     associatedtype ResponseType
     
-    func task(_ work: Work<ResponseType>, session: URLSession, request: URLRequest) -> URLSessionTask
+    func load(session: URLSession, request: URLRequest, delegate: URLSessionTaskDelegate) async throws -> ResponseType
 }
 
 public struct RequestParameters {
@@ -46,7 +46,7 @@ public struct RequestParameters {
 open class BaseRequest {
     
     let parameters: RequestParameters
-    var validateBody: BodyValidation?
+    var validateBody: ResponseValidation?
     
     public init(_ parameters: RequestParameters) {
         self.parameters = parameters
@@ -60,17 +60,12 @@ open class BaseRequest {
     }
     
     @discardableResult
-    func validate(response: URLResponse?, data: Data?, error: Error?) throws -> Any? {
-        if let error = error {
-            print("Fail \(String(describing: self)) with error: \(error.localizedDescription)")
-            throw error
-        }
-        
+    func validate(response: URLResponse, data: Data?) throws -> Any? {
         if let data = data {
             let responseObject = try JSONSerialization.jsonObject(with: data, options: [])
             
-            if let response = response as? HTTPURLResponse {
-                try validateBody?(response, responseObject as? [String : Any])
+            if let response = response as? HTTPURLResponse, let validateBody = validateBody {
+                try validateBody(response, responseObject as? [String : Any])
             }
             return responseObject
         }
