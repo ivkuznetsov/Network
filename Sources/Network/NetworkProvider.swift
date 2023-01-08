@@ -94,7 +94,7 @@ open class NetworkProvider: NSObject, URLSessionTaskDelegate {
         self.logging = logging
     }
     
-    open func load<T: BaseRequest & WithResponseType>(_ request: T, customToken: String? = nil) async throws -> T.ResponseType {
+    open func load<T: BaseRequest & WithResponseType>(_ request: T, customToken: String? = nil, progress: ((Double)->())? = nil) async throws -> T.ResponseType {
         
         request.validateBody = validateBody
         
@@ -111,7 +111,13 @@ open class NetworkProvider: NSObject, URLSessionTaskDelegate {
         }
         
         do {
+            if let progress = progress {
+                _progress.mutate { $0[urlRequest] = progress }
+            }
+            
             let result = try await request.load(session: session, request: urlRequest, delegate: self)
+            
+            _progress.mutate { $0[urlRequest] = nil }
             
             if logging == true {
                 print("Success \(request.parameters.endpoint ?? ""), response: \(String(describing: result))")
@@ -123,10 +129,20 @@ open class NetworkProvider: NSObject, URLSessionTaskDelegate {
             }
             if customToken == nil, let auth = auth {
                 try await auth.reauth(error, oldToken: token)
-                return try await load(request)
+                return try await load(request, progress: progress)
             } else {
                 throw error
             }
         }
+    }
+    
+    @RWAtomic private var progress: [URLRequest:(Double)->()] = [:]
+    
+    public func urlSession(_ session: URLSession, didCreateTask task: URLSessionTask) {
+        guard let reqeust = task.currentRequest, let progress = self.progress[reqeust] else { return }
+        
+        task.progress.observe(\.fractionCompleted) { @MainActor item, _ in
+            progress(item.fractionCompleted)
+        }.retained(by: task)
     }
 }
