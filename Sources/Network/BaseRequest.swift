@@ -20,7 +20,7 @@ public protocol WithResponseType: AnyObject {
 
 public struct RequestParameters {
     
-    let endpoint: String?
+    let endpoint: String
     let method: HTTPMethod
     let parameters: [String : Any]?
     let payload: [String : Any]?
@@ -73,11 +73,7 @@ open class BaseRequest {
     }
     
     func urlRequest(baseURL: URL) -> URLRequest {
-        var url: URL = baseURL
-        
-        if let endpoint = parameters.endpoint {
-            url = url.appendingPathComponent(endpoint)
-        }
+        let url = baseURL.appendingPathComponent(parameters.endpoint)
         
         var urlComponents = URLComponents(url: url, resolvingAgainstBaseURL: true)!
         

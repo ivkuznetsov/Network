@@ -120,12 +120,12 @@ open class NetworkProvider: NSObject, URLSessionTaskDelegate {
             _progress.mutate { $0[urlRequest] = nil }
             
             if logging == true {
-                print("Success \(request.parameters.endpoint ?? ""), response: \(String(describing: result))")
+                print("Success \(request.parameters.endpoint), response: \(String(describing: result))")
             }
             return result
         } catch {
             if logging == true {
-                print("Failed \(request.parameters.endpoint ?? ""), error: \(error.localizedDescription)")
+                print("Failed \(request.parameters.endpoint), error: \(error.localizedDescription)")
             }
             if customToken == nil, let auth = auth {
                 try await auth.reauth(error, oldToken: token)

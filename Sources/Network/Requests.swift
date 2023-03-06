@@ -19,6 +19,45 @@ open class SimpleRequest: BaseRequest, WithResponseType {
     }
 }
 
+open class MultipartUploadRequest: UploadRequest {
+    
+    public struct File {
+        let data: Data
+        let mimeType: String
+        let fileName: String
+        
+        public init(data: Data, mimeType: String, fileName: String) {
+            self.data = data
+            self.mimeType = mimeType
+            self.fileName = fileName
+        }
+    }
+    
+    public init(file: File, parameters: RequestParameters) {
+        var headers = parameters.headers
+        
+        var formData = MultipartFormData()
+        parameters.payload?.forEach { key, value in
+            if let value = value as? String {
+                formData.addField(named: key, value: value)
+            }
+        }
+        formData.addField(named: "Content-Type", value: file.mimeType)
+        formData.addField(named: "file", filename: "file", data: file.data)
+        
+        headers["Content-Type"] = "multipart/form-data; boundary=\(formData.boundary)"
+        
+        let resultParameters = RequestParameters(endpoint: parameters.endpoint,
+                                                 method: .post,
+                                                 parameters: parameters.parameters,
+                                                 headers: headers,
+                                                 payload: nil,
+                                                 auth: parameters.auth)
+        
+        super.init(data: formData.httpBody, parameters: resultParameters)
+    }
+}
+
 open class UploadRequest: SimpleRequest {
     let uploadData: Data
     
