@@ -61,7 +61,7 @@ open class BaseRequest {
     
     @discardableResult
     func validate(response: URLResponse, data: Data?) throws -> Any? {
-        if let data = data {
+        if let data = data, data.count > 0 {
             let responseObject = try JSONSerialization.jsonObject(with: data, options: [])
             
             if let response = response as? HTTPURLResponse, let validateBody = validateBody {
@@ -73,7 +73,11 @@ open class BaseRequest {
     }
     
     func urlRequest(baseURL: URL) -> URLRequest {
-        let url = baseURL.appendingPathComponent(parameters.endpoint)
+        var url = baseURL
+        
+        if parameters.endpoint.isValid {
+            url = url.appendingPathComponent(parameters.endpoint)
+        }
         
         var urlComponents = URLComponents(url: url, resolvingAgainstBaseURL: true)!
         
