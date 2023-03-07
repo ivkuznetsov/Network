@@ -36,16 +36,19 @@ open class MultipartUploadRequest: UploadRequest {
     public init(file: File, parameters: RequestParameters) {
         var headers = parameters.headers
         
-        var formData = MultipartFormData()
+        var parts: [MultipartForm.Part] = []
         parameters.payload?.forEach { key, value in
             if let value = value as? String {
-                formData.addField(named: key, value: value)
+                parts.append(.init(name: key, value: value))
             }
         }
-        formData.addField(named: "Content-Type", value: file.mimeType)
-        formData.addField(named: "file", filename: "file", data: file.data)
+        parts.append(.init(name: "file", data: file.data, filename: file.fileName, contentType: file.mimeType))
         
-        headers["Content-Type"] = "multipart/form-data; boundary=\(formData.boundary)"
+        let form = MultipartForm(parts: parts)
+        let body = form.bodyData
+        
+        headers["Content-Type"] = form.contentType
+        headers["Content-Length"] = "\(body.count)"
         
         let resultParameters = RequestParameters(endpoint: parameters.endpoint,
                                                  method: .post,
@@ -54,7 +57,7 @@ open class MultipartUploadRequest: UploadRequest {
                                                  payload: nil,
                                                  auth: parameters.auth)
         
-        super.init(data: formData.httpBody, parameters: resultParameters)
+        super.init(data: body, parameters: resultParameters)
     }
 }
 
