@@ -62,10 +62,20 @@ open class BaseRequest {
     @discardableResult
     func validate(response: URLResponse, data: Data?) throws -> Any? {
         if let data = data, data.count > 0 {
-            let responseObject = try JSONSerialization.jsonObject(with: data, options: [])
+            var resultError: Error?
+            var responseObject: Any?
+            
+            do {
+                responseObject = try JSONSerialization.jsonObject(with: data, options: [])
+            } catch {
+                resultError = error
+            }
             
             if let response = response as? HTTPURLResponse, let validateBody = validateBody {
-                try validateBody(response, responseObject as? [String : Any])
+                try validateBody(response, data, responseObject as? [String : Any])
+            }
+            if let error = resultError {
+                throw error
             }
             return responseObject
         }

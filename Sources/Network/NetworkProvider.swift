@@ -15,7 +15,7 @@ public struct Token: Codable {
     }
 }
 
-public typealias ResponseValidation = (HTTPURLResponse, _ body: [String : Any]?) throws -> ()
+public typealias ResponseValidation = (HTTPURLResponse, _ data: Data, _ body: [String : Any]?) throws -> ()
 
 open class NetworkProvider: NSObject, URLSessionTaskDelegate {
     
