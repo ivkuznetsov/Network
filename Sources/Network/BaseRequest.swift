@@ -9,7 +9,7 @@ import Foundation
 import CommonUtils
 
 public enum HTTPMethod: String {
-    case get, post, put, delete
+    case get, post, put, delete, patch
 }
 
 public protocol WithResponseType: AnyObject {
@@ -99,7 +99,7 @@ open class BaseRequest {
         
         var urlRequest = URLRequest(url: requestUrl)
         urlRequest.allHTTPHeaderFields = parameters.headers
-        urlRequest.httpMethod = parameters.method.rawValue
+        urlRequest.httpMethod = parameters.method.rawValue.uppercased()
         
         do {
             urlRequest.httpBody = try data()
