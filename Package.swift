@@ -4,22 +4,22 @@
 import PackageDescription
 
 let package = Package(
-    name: "Network",
+    name: "NetworkKit",
     platforms: [
         .macOS(.v10_13),
         .iOS(.v14)
     ],
     products: [
         .library(
-            name: "Network",
-            targets: ["Network"]),
+            name: "NetworkKit",
+            targets: ["NetworkKit"]),
     ],
     dependencies: [
         .package(url: "https://github.com/ivkuznetsov/CommonUtils.git", branch: "main"),
     ],
     targets: [
         .target(
-            name: "Network",
+            name: "NetworkKit",
             dependencies: ["CommonUtils"]),
     ]
 )
