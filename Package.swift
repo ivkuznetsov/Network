@@ -15,7 +15,7 @@ let package = Package(
             targets: ["NetworkKit"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/ivkuznetsov/CommonUtils.git", branch: "main"),
+        .package(url: "https://github.com/ivkuznetsov/CommonUtils.git", from: .init(1, 2, 6))
     ],
     targets: [
         .target(
