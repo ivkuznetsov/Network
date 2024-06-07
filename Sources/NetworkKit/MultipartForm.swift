@@ -6,91 +6,168 @@
 //
 
 import Foundation
+import CommonUtils
 
 struct MultipartForm: Hashable, Equatable {
     
-    struct Part: Hashable, Equatable {
-        let name: String
-        var data: Data
-        let filename: String?
-        let contentType: String?
-        
-        var value: String? {
-            get {
-                return String(bytes: data, encoding: .utf8)
-            }
-            set {
-                guard let value = newValue else {
-                    data = Data()
-                    return
-                }
-                data = value.data(using: .utf8, allowLossyConversion: true)!
-            }
-        }
-        
-        init(name: String, data: Data, filename: String? = nil, contentType: String? = nil) {
-            self.name = name
-            self.data = data
-            self.filename = filename
-            self.contentType = contentType
-        }
-        
-        init(name: String, value: String) {
-            let data = value.data(using: .utf8, allowLossyConversion: true)!
-            self.init(name: name, data: data, filename: nil, contentType: nil)
-        }
-    }
-    
-    var boundary: String
-    var parts: [Part]
+    let id = UUID().uuidString
+    let boundary: String
+    let parameters: [String:Any]
+    let fileKey: String
+    let file: File
     
     var contentType: String { "multipart/form-data; boundary=\(boundary)" }
     
-    public var bodyData: Data {
-        var body = Data()
+    func makeStream(logging: Bool) -> (stream: InputStream, contentLength: Int) {
+        var header = Data()
         
-        for part in parts {
-            body.append("--\(boundary)\r\n")
-            body.append("Content-Disposition: form-data; name=\"\(part.name)\"")
-            if let filename = part.filename?.replacingOccurrences(of: "\"", with: "_") {
-                body.append("; filename=\"\(filename)\"")
+        var length: Int = 0
+        
+        parameters.forEach { key, value in
+            header.append("--\(boundary)\r\n")
+            header.append("Content-Disposition:form-data; name=\"\(key)\"\r\n")
+            if let value = value as? String {
+                header.append("\r\n")
+                header.append(value)
+            } else if let value = try? JSONSerialization.data(withJSONObject: value) {
+                header.append("Content-Type: \"application/json\"\r\n")
+                header.append("\r\n")
+                header.append(value)
             }
-            body.append("\r\n")
-            if let contentType = part.contentType {
-                body.append("Content-Type: \(contentType)\r\n")
-            }
-            body.append("\r\n")
-            body.append(part.data)
-            body.append("\r\n")
+            header.append("\r\n")
         }
-        body.append("--\(boundary)--\r\n")
         
-        return body
+        header.append("--\(boundary)\r\n")
+        header.append("Content-Disposition:form-data; name=\"\(fileKey)\"; filename=\"\(file.fileName.replacingOccurrences(of: "\"", with: "_"))\"\r\n")
+        header.append("Content-Type: \(file.mimeType)\r\n")
+        header.append("\r\n")
+        
+        let headerStream = InputStream(data: header)
+        length += header.count
+        
+        let fileStream: InputStream
+        switch file.content {
+        case .data(let data):
+            fileStream = .init(data: data)
+            length += data.count
+        case .fileUrl(let url):
+            fileStream = .init(url: url)!
+            if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+                length += size
+            }
+        }
+        
+        let footer = "\r\n--\(boundary)--\r\n".data(using: .utf8)!
+        length += footer.count
+        let footerStream = InputStream(data: footer)
+        
+        if logging {
+            print("Body:\n\(String(data: header, encoding: .utf8)!)[file data]\(String(data: footer, encoding: .utf8)!)")
+        }
+        return (MultiStream(inputStreams: [headerStream, fileStream, footerStream]), length)
     }
     
-    public init(parts: [Part] = [], boundary: String = UUID().uuidString) {
-        self.parts = parts
+    public init(fileKey: String, file: File, parameters: [String: Any], boundary: String = UUID().uuidString) {
+        self.fileKey = fileKey
+        self.parameters = parameters
+        self.file = file
         self.boundary = boundary
     }
     
-    public subscript(name: String) -> Part? {
-        get { parts.first(where: { $0.name == name }) }
-        set {
-            precondition(newValue == nil || newValue?.name == name)
-            
-            var parts = self.parts
-            parts = parts.filter { $0.name != name }
-            if let newValue = newValue {
-                parts.append(newValue)
-            }
-            self.parts = parts
-        }
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+    
+    static func == (lhs: MultipartForm, rhs: MultipartForm) -> Bool {
+        lhs.hashValue == rhs.hashValue
     }
 }
 
-extension Data {
+fileprivate extension Data {
     
     mutating func append(_ string: String) {
-        append(string.data(using: .utf8, allowLossyConversion: true)!)
+        append(string.data(using: .utf8)!)
     }
+}
+
+fileprivate final class MultiStream: InputStream {
+
+    private var _delegate: (any StreamDelegate)?
+    override var delegate: (any StreamDelegate)? {
+        get { _delegate }
+        set { _delegate = newValue }
+    }
+    
+    private var _streamError: Error?
+    override var streamError: Error? { _streamError }
+    
+    @RWAtomic private var _streamStatus: Stream.Status = .notOpen
+    override var streamStatus: Stream.Status { _streamStatus }
+    
+    init(inputStreams: [InputStream]) {
+        self.inputStreams = inputStreams
+        super.init()
+    }
+
+    private let inputStreams: [InputStream]
+    @RWAtomic private var currentIndex: Int = 0
+
+    override func open() {
+        _streamStatus = .opening
+        _streamStatus = .open
+        inputStreams[0].open()
+    }
+
+    override func close() {
+        inputStreams.forEach { $0.close() }
+        _streamStatus = .closed
+    }
+
+    override var hasBytesAvailable: Bool {
+        currentIndex < inputStreams.count
+    }
+
+    override func read(_ buffer: UnsafeMutablePointer<UInt8>, maxLength: Int) -> Int {
+        if _streamStatus == .closed { return 0 }
+
+        while currentIndex < inputStreams.count {
+            let currentInputStream = inputStreams[currentIndex]
+            
+            if currentInputStream.streamStatus == .notOpen {
+                currentInputStream.open()
+            }
+            
+            if !currentInputStream.hasBytesAvailable {
+                self.currentIndex += 1
+                continue
+            }
+            
+            let numberOfBytesRead = currentInputStream.read(buffer, maxLength: maxLength)
+                
+            if numberOfBytesRead == 0 {
+                self.currentIndex += 1
+                continue
+            }
+            
+            if numberOfBytesRead == -1 {
+                self._streamError = currentInputStream.streamError
+                self._streamStatus = .error
+                return -1
+            }
+            
+            return numberOfBytesRead
+        }
+        return 0
+    }
+    
+    override func getBuffer(_ buffer: UnsafeMutablePointer<UnsafeMutablePointer<UInt8>?>, length len: UnsafeMutablePointer<Int>) -> Bool { false }
+    
+    override func property(forKey key: Stream.PropertyKey) -> Any? { nil }
+
+    override func setProperty(_ property: Any?, forKey key: Stream.PropertyKey) -> Bool { false
+    }
+
+    override func schedule(in aRunLoop: RunLoop, forMode mode: RunLoop.Mode) { }
+
+    override func remove(from aRunLoop: RunLoop, forMode mode: RunLoop.Mode) { }
 }

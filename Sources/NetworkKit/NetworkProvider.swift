@@ -6,8 +6,8 @@ import Foundation
 import CommonUtils
 
 public struct Token: Codable {
-    let auth: String
-    let refresh: String?
+    public let auth: String
+    public let refresh: String?
     
     public init(auth: String, refresh: String? = nil) {
         self.auth = auth
@@ -15,11 +15,11 @@ public struct Token: Codable {
     }
 }
 
-public typealias ResponseValidation = (HTTPURLResponse, _ data: Data, _ body: [String : Any]?) throws -> ()
+public typealias ResponseValidation = (HTTPURLResponse, _ data: Data?, _ body: [String : Any]?) throws -> ()
 
 open class NetworkProvider: NSObject, URLSessionTaskDelegate {
     
-    public struct AuthRefresher {
+    public struct Auth {
         
         let relogin: () async throws ->()
         let unauthCodes: [Int]
@@ -39,11 +39,11 @@ open class NetworkProvider: NSObject, URLSessionTaskDelegate {
             self.keychainService = keychainService
         }
         
-        func update(token: Token?) {
+        public func update(token: Token?) {
             Keychain.set(data: try? token?.toData(), service: keychainService)
         }
         
-        var token: Token? {
+        public var token: Token? {
             if let data = Keychain.get(keychainService) {
                 return try? Token.decode(data)
             }
@@ -52,7 +52,7 @@ open class NetworkProvider: NSObject, URLSessionTaskDelegate {
         
         func reauth(_ error: Error, oldToken: String?) async throws {
             let currentToken = token?.auth
-            if let currentToken = currentToken, currentToken != oldToken { return } // already updated
+            if let currentToken, currentToken != oldToken { return } // already updated
             
             try await SingletonTasks.run(key: "reauth") {
                 if unauthCodes.contains((error as NSError).code) {
@@ -74,21 +74,24 @@ open class NetworkProvider: NSObject, URLSessionTaskDelegate {
     }
     
     private let baseURL: URL
-    private let auth: AuthRefresher?
-    private let validateBody: ResponseValidation?
+    public let auth: Auth?
+    private let validate: ResponseValidation?
     private let session: URLSession
     private let logging: Bool
     private let willSend: ((inout URLRequest)->())?
+    private let willRedirect: ((URLSessionTask, HTTPURLResponse, URLRequest)->URLRequest?)?
     
     public init(baseURL: URL,
-                auth: AuthRefresher? = nil,
+                auth: Auth? = nil,
                 willSend: ((inout URLRequest)->())? = nil,
-                validateBody: ResponseValidation? = nil,
+                willRedirect: ((URLSessionTask, HTTPURLResponse, URLRequest)->URLRequest?)? = nil,
+                validate: ResponseValidation? = nil,
                 session: URLSession = URLSession.shared,
                 logging: Bool = true) {
+        self.willRedirect = willRedirect
         self.baseURL = baseURL
         self.auth = auth
-        self.validateBody = validateBody
+        self.validate = validate
         self.willSend = willSend
         self.session = session
         self.logging = logging
@@ -96,9 +99,9 @@ open class NetworkProvider: NSObject, URLSessionTaskDelegate {
     
     open func load<T: BaseRequest & WithResponseType>(_ request: T, customToken: String? = nil, progress: ((Double)->())? = nil) async throws -> T.ResponseType {
         
-        request.validateBody = validateBody
+        request.validate = validate
         
-        var urlRequest = request.urlRequest(baseURL: baseURL)
+        var urlRequest = request.urlRequest(baseURL: baseURL, logging: logging)
         let token = request.parameters.auth ? (customToken ?? auth?.token?.auth) : nil
         
         if let token = token {
@@ -107,7 +110,7 @@ open class NetworkProvider: NSObject, URLSessionTaskDelegate {
         willSend?(&urlRequest)
         
         if logging {
-            print("Sending \(urlRequest.url?.absoluteString ?? "")\nparameters: \((request.parameters.parameters ?? [:]) as NSDictionary)\npayload: \((request.parameters.payload ?? [:]) as NSDictionary)")
+            print("Sending \(urlRequest.url?.absoluteString ?? "")\nparameters: \((request.parameters.parameters ?? [:]) as NSDictionary)\npayload: \((request.parameters.payload ?? [:]) as NSDictionary)\nheaders: \(urlRequest.allHTTPHeaderFields as? NSDictionary ?? [:])")
         }
         
         do {
@@ -127,7 +130,7 @@ open class NetworkProvider: NSObject, URLSessionTaskDelegate {
             if logging == true {
                 print("Failed \(request.parameters.endpoint), error: \(error.localizedDescription)")
             }
-            if customToken == nil, let auth = auth {
+            if customToken == nil, let auth = auth, request.parameters.auth {
                 try await auth.reauth(error, oldToken: token)
                 return try await load(request, progress: progress)
             } else {
@@ -141,8 +144,22 @@ open class NetworkProvider: NSObject, URLSessionTaskDelegate {
     public func urlSession(_ session: URLSession, didCreateTask task: URLSessionTask) {
         guard let reqeust = task.currentRequest, let progress = self.progress[reqeust] else { return }
         
-        task.progress.observe(\.fractionCompleted) { @MainActor item, _ in
-            progress(item.fractionCompleted)
+        task.progress.observe(\.fractionCompleted) { item, _ in
+            DispatchQueue.main.async { progress(item.fractionCompleted) }
         }.retained(by: task)
+    }
+    
+    public func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest) async -> URLRequest? {
+        if let willRedirect {
+            return willRedirect(task, response, request)
+        }
+        return request
+    }
+    
+    public func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+        if task.originalRequest?.httpBodyStream != nil {
+            task.progress.totalUnitCount = totalBytesExpectedToSend
+            task.progress.completedUnitCount = totalBytesSent
+        }
     }
 }

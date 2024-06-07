@@ -9,46 +9,38 @@ open class SimpleRequest: BaseRequest, WithResponseType {
     public typealias ResponseType = Void
     
     public func load(session: URLSession, request: URLRequest, delegate: URLSessionTaskDelegate) async throws -> () {
-        let result: (Data, URLResponse)
-        if #available(iOS 15, *) {
-            result = try await session.data(for: request, delegate: delegate)
-        } else {
-            result = try await session.data(for: request)
-        }
+        let result = try await session.data(for: request, delegate: delegate)
         try validate(response: result.1, data: result.0)
     }
 }
 
-open class MultipartUploadRequest: UploadRequest {
+public struct File: Hashable {
     
-    public struct File {
-        let data: Data
-        let mimeType: String
-        let fileName: String
-        
-        public init(data: Data, mimeType: String, fileName: String) {
-            self.data = data
-            self.mimeType = mimeType
-            self.fileName = fileName
-        }
+    public enum Content: Hashable {
+        case data(Data)
+        case fileUrl(URL)
     }
     
-    public init(file: File, parameters: RequestParameters) {
+    let content: Content
+    let mimeType: String
+    let fileName: String
+    
+    public init(content: Content, mimeType: String, fileName: String) {
+        self.content = content
+        self.mimeType = mimeType
+        self.fileName = fileName
+    }
+}
+
+open class MultipartUploadRequest: SimpleRequest {
+    
+    let multiPartForm: MultipartForm
+    
+    public init(file: File, fileKey: String = "file", parameters: RequestParameters) {
+        multiPartForm = .init(fileKey: fileKey, file: file, parameters: parameters.payload ?? [:])
+        
         var headers = parameters.headers
-        
-        var parts: [MultipartForm.Part] = []
-        parameters.payload?.forEach { key, value in
-            if let value = value as? String {
-                parts.append(.init(name: key, value: value))
-            }
-        }
-        parts.append(.init(name: "file", data: file.data, filename: file.fileName, contentType: file.mimeType))
-        
-        let form = MultipartForm(parts: parts)
-        let body = form.bodyData
-        
-        headers["Content-Type"] = form.contentType
-        headers["Content-Length"] = "\(body.count)"
+        headers["Content-Type"] = multiPartForm.contentType
         
         let resultParameters = RequestParameters(endpoint: parameters.endpoint,
                                                  method: .post,
@@ -56,8 +48,13 @@ open class MultipartUploadRequest: UploadRequest {
                                                  headers: headers,
                                                  payload: nil,
                                                  auth: parameters.auth)
-        
-        super.init(data: body, parameters: resultParameters)
+        super.init(resultParameters)
+    }
+    
+    override func setBody(request: inout URLRequest, logging: Bool) throws {
+        let stream = multiPartForm.makeStream(logging: logging)
+        request.httpBodyStream = stream.stream
+        request.addValue("\(stream.contentLength)", forHTTPHeaderField: "Content-Length")
     }
 }
 
@@ -75,12 +72,7 @@ open class UploadRequest: SimpleRequest {
     }
     
     public override func load(session: URLSession, request: URLRequest, delegate: URLSessionTaskDelegate) async throws -> () {
-        let result: (Data, URLResponse)
-        if #available(iOS 15, *) {
-            result = try await session.upload(for: request, from: uploadData, delegate: delegate)
-        } else {
-            result = try await session.upload(for: request, from: uploadData)
-        }
+        let result = try await session.upload(for: request, from: uploadData, delegate: delegate)
         try validate(response: result.1, data: result.0)
     }
 }
@@ -94,12 +86,7 @@ open class UploadFileRequest: SimpleRequest {
     }
     
     public override func load(session: URLSession, request: URLRequest, delegate: URLSessionTaskDelegate) async throws -> () {
-        let result: (Data, URLResponse)
-        if #available(iOS 15, *) {
-            result = try await session.upload(for: request, fromFile: fileURL, delegate: delegate)
-        } else {
-            result = try await session.upload(for: request, fromFile: fileURL)
-        }
+        let result = try await session.upload(for: request, fromFile: fileURL, delegate: delegate)
         try validate(response: result.1, data: result.0)
     }
 }
@@ -126,12 +113,7 @@ open class SerializableRequest<T>: BaseRequest, WithResponseType {
     }
     
     public func load(session: URLSession, request: URLRequest, delegate: URLSessionTaskDelegate) async throws -> T {
-        let result: (Data, URLResponse)
-        if #available(iOS 15, *) {
-            result = try await session.data(for: request, delegate: delegate)
-        } else {
-            result = try await session.data(for: request)
-        }
+        let result = try await session.data(for: request, delegate: delegate)
         let jsonObject = try validate(response: result.1, data: result.0)
         
         guard let jsonObject = jsonObject else {

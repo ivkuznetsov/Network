@@ -46,7 +46,7 @@ public struct RequestParameters {
 open class BaseRequest {
     
     let parameters: RequestParameters
-    var validateBody: ResponseValidation?
+    var validate: ResponseValidation?
     
     public init(_ parameters: RequestParameters) {
         self.parameters = parameters
@@ -54,6 +54,14 @@ open class BaseRequest {
     
     func data() throws -> Data? {
         if let payload = parameters.payload {
+            if parameters.headers["Content-Type"] == "application/x-www-form-urlencoded" {
+                var components = URLComponents()
+                components.queryItems = payload.map {
+                    let value = $0.value as! String
+                    return URLQueryItem(name: $0.key, value: value)
+                }
+                return components.query?.data(using: .utf8)
+            }
             return try JSONSerialization.data(withJSONObject: payload)
         }
         return nil
@@ -61,28 +69,31 @@ open class BaseRequest {
     
     @discardableResult
     func validate(response: URLResponse, data: Data?) throws -> Any? {
+        var resultError: Error?
+        var responseObject: Any?
+        
         if let data = data, data.count > 0 {
-            var resultError: Error?
-            var responseObject: Any?
-            
             do {
                 responseObject = try JSONSerialization.jsonObject(with: data, options: [])
             } catch {
                 resultError = error
             }
-            
-            if let response = response as? HTTPURLResponse, let validateBody = validateBody {
-                try validateBody(response, data, responseObject as? [String : Any])
-            }
-            if let error = resultError {
-                throw error
-            }
-            return responseObject
         }
-        return nil
+        
+        if let response = response as? HTTPURLResponse, let validate = validate {
+            try validate(response, data, responseObject as? [String : Any])
+        }
+        if let error = resultError {
+            throw error
+        }
+        return responseObject
     }
     
-    func urlRequest(baseURL: URL) -> URLRequest {
+    func setBody(request: inout URLRequest, logging: Bool) throws {
+        request.httpBody = try data()
+    }
+    
+    func urlRequest(baseURL: URL, logging: Bool) -> URLRequest {
         var url = baseURL
         
         if parameters.endpoint.isValid {
@@ -102,7 +113,7 @@ open class BaseRequest {
         urlRequest.httpMethod = parameters.method.rawValue.uppercased()
         
         do {
-            urlRequest.httpBody = try data()
+            try setBody(request: &urlRequest, logging: logging)
         } catch {
             fatalError(error.localizedDescription)
         }
