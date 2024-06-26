@@ -29,10 +29,15 @@ struct MultipartForm: Hashable, Equatable {
             if let value = value as? String {
                 header.append("\r\n")
                 header.append(value)
-            } else if let value = try? JSONSerialization.data(withJSONObject: value) {
-                header.append("Content-Type: \"application/json\"\r\n")
+            } else if value is [AnyHashable:Any] || value is [Any] {
+                if let value = try? JSONSerialization.data(withJSONObject: value) {
+                    header.append("Content-Type: \"application/json\"\r\n")
+                    header.append("\r\n")
+                    header.append(value)
+                }
+            } else if let value = value as? NSNumber {
                 header.append("\r\n")
-                header.append(value)
+                header.append("\(value)")
             }
             header.append("\r\n")
         }
