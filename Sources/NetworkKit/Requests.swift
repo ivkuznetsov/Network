@@ -14,9 +14,9 @@ open class SimpleRequest: BaseRequest, WithResponseType {
     }
 }
 
-public struct File: Hashable {
+public struct File: Hashable, Sendable {
     
-    public enum Content: Hashable {
+    public enum Content: Hashable, Sendable {
         case data(Data)
         case fileUrl(URL)
     }
@@ -91,7 +91,6 @@ open class UploadFileRequest: SimpleRequest {
     }
 }
 
-@available(iOS 15, *)
 open class DownloadRequest: BaseRequest, WithResponseType {
     public typealias ResponseType = URL
     
@@ -123,7 +122,36 @@ open class SerializableRequest<T>: BaseRequest, WithResponseType {
     }
 }
 
-public protocol ResponsePage {
+extension WithResponseType {
+    
+    @discardableResult
+    func validate(response: URLResponse, data: Data?) throws -> Any? {
+        var resultError: Error?
+        var responseObject: Any?
+        
+        if let data = data, data.count > 0 {
+            do {
+                if let type = Self.ResponseType.self as? Codable.Type {
+                    responseObject = try JSONDecoder().decode(type, from: data)
+                } else {
+                    responseObject = try JSONSerialization.jsonObject(with: data, options: [])
+                }
+            } catch {
+                resultError = error
+            }
+        }
+        
+        if let response = response as? HTTPURLResponse, let validate = self.validate {
+            try validate(response, data, responseObject as? [String : Any])
+        }
+        if let error = resultError {
+            throw error
+        }
+        return responseObject
+    }
+}
+
+public protocol ResponsePage: Sendable {
     
     var values: [[String : Any]] { get }
     var nextOffset: Any? { get }

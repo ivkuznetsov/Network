@@ -8,11 +8,11 @@
 import Foundation
 import CommonUtils
 
-struct MultipartForm: Hashable, Equatable {
+struct MultipartForm: Hashable, Equatable, Sendable {
     
     let id = UUID().uuidString
     let boundary: String
-    let parameters: [String:Any]
+    let parameters: JSONDictionary
     let fileKey: String
     let file: File
     
@@ -23,19 +23,19 @@ struct MultipartForm: Hashable, Equatable {
         
         var length: Int = 0
         
-        parameters.forEach { key, value in
+        parameters.store.forEach { key, item in
             header.append("--\(boundary)\r\n")
             header.append("Content-Disposition:form-data; name=\"\(key)\"\r\n")
-            if let value = value as? String {
+            if let value = item.value as? String {
                 header.append("\r\n")
                 header.append(value)
-            } else if value is [AnyHashable:Any] || value is [Any] {
-                if let value = try? JSONSerialization.data(withJSONObject: value) {
+            } else if item.value is JSONDictionary || item.value is [JSONDictionary] {
+                if let value = try? JSONEncoder().encode(item) {
                     header.append("Content-Type: \"application/json\"\r\n")
                     header.append("\r\n")
                     header.append(value)
                 }
-            } else if let value = value as? NSNumber {
+            } else if let value = item.value as? NSNumber {
                 header.append("\r\n")
                 header.append("\(value)")
             }
@@ -72,7 +72,7 @@ struct MultipartForm: Hashable, Equatable {
         return (MultiStream(inputStreams: [headerStream, fileStream, footerStream]), length)
     }
     
-    public init(fileKey: String, file: File, parameters: [String: Any], boundary: String = UUID().uuidString) {
+    public init(fileKey: String, file: File, parameters: JSONDictionary, boundary: String = UUID().uuidString) {
         self.fileKey = fileKey
         self.parameters = parameters
         self.file = file

@@ -5,7 +5,7 @@
 import Foundation
 import CommonUtils
 
-public struct Token: Codable {
+public struct Token: Codable, Sendable {
     public let auth: String
     public let refresh: String?
     
@@ -15,22 +15,22 @@ public struct Token: Codable {
     }
 }
 
-public typealias ResponseValidation = (HTTPURLResponse, _ data: Data?, _ body: [String : Any]?) throws -> ()
+public typealias ResponseValidation = @Sendable (HTTPURLResponse, _ data: Data?, _ body: [String : Any]?) throws -> ()
 
 open class NetworkProvider: NSObject, URLSessionTaskDelegate {
     
-    public struct Auth {
+    public struct Auth: Sendable {
         
-        let relogin: () async throws ->()
+        let relogin: @Sendable () async throws ->()
         let unauthCodes: [Int]
-        let authorize: (inout URLRequest, String)->()
-        let refreshToken: ((String) async throws -> Token)?
+        let authorize: @Sendable (inout URLRequest, String)->()
+        let refreshToken: (@Sendable (String) async throws -> Token)?
         let keychainService: String
         
-        public init(relogin: @escaping () async throws ->(),
+        public init(relogin: @Sendable @escaping () async throws ->(),
                     unauthCodes: [Int] = [401, 403],
-                    authorize: @escaping (inout URLRequest, String)->(),
-                    refreshToken: ((String) async throws -> Token)? = nil,
+                    authorize: @Sendable @escaping (inout URLRequest, String)->(),
+                    refreshToken: (@Sendable (String) async throws -> Token)? = nil,
                     keychainService: String) {
             self.relogin = relogin
             self.unauthCodes = unauthCodes
@@ -110,7 +110,7 @@ open class NetworkProvider: NSObject, URLSessionTaskDelegate {
         willSend?(&urlRequest)
         
         if logging {
-            print("Sending \(urlRequest.url?.absoluteString ?? "")\nparameters: \((request.parameters.parameters ?? [:]) as NSDictionary)\npayload: \((request.parameters.payload ?? [:]) as NSDictionary)\nheaders: \(urlRequest.allHTTPHeaderFields as? NSDictionary ?? [:])")
+            print("Sending \(urlRequest.url?.absoluteString ?? "")\nparameters: \((request.parameters.parameters?.store ?? [:]) as NSDictionary)\npayload: \((request.parameters.payload?.store ?? [:]) as NSDictionary)\nheaders: \(urlRequest.allHTTPHeaderFields as? NSDictionary ?? [:])")
         }
         
         do {

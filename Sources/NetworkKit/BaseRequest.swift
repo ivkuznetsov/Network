@@ -8,30 +8,32 @@
 import Foundation
 import CommonUtils
 
-public enum HTTPMethod: String {
+public enum HTTPMethod: String, Sendable {
     case get, post, put, delete, patch
 }
 
-public protocol WithResponseType: AnyObject {
+public protocol WithResponseType {
     associatedtype ResponseType
+    
+    var validate: ResponseValidation? { get }
     
     func load(session: URLSession, request: URLRequest, delegate: URLSessionTaskDelegate) async throws -> ResponseType
 }
 
-public struct RequestParameters {
+public struct RequestParameters: @unchecked Sendable {
     
     let endpoint: String
     let method: HTTPMethod
-    let parameters: [String : Any]?
-    let payload: [String : Any]?
+    let parameters: JSONDictionary?
+    let payload: JSONDictionary?
     let headers: [String: String]
     let auth: Bool
     
     public init(endpoint: String,
                 method: HTTPMethod = .get,
-                parameters: [String : Any]? = nil,
-                headers: [String:String] = ["Content-Type": "application/json"],
-                payload: [String : Any]? = nil,
+                parameters: JSONDictionary? = nil,
+                headers: [String: String] = ["Content-Type": "application/json"],
+                payload: JSONDictionary? = nil,
                 auth: Bool = true) {
         
         self.endpoint = endpoint
@@ -46,7 +48,7 @@ public struct RequestParameters {
 open class BaseRequest {
     
     let parameters: RequestParameters
-    var validate: ResponseValidation?
+    public var validate: ResponseValidation?
     
     public init(_ parameters: RequestParameters) {
         self.parameters = parameters
@@ -56,37 +58,15 @@ open class BaseRequest {
         if let payload = parameters.payload {
             if parameters.headers["Content-Type"] == "application/x-www-form-urlencoded" {
                 var components = URLComponents()
-                components.queryItems = payload.map {
-                    let value = $0.value as! String
+                components.queryItems = payload.store.map {
+                    let value = $0.value.value as! String
                     return URLQueryItem(name: $0.key, value: value)
                 }
                 return components.query?.data(using: .utf8)
             }
-            return try JSONSerialization.data(withJSONObject: payload)
+            return try JSONEncoder().encode(payload)
         }
         return nil
-    }
-    
-    @discardableResult
-    func validate(response: URLResponse, data: Data?) throws -> Any? {
-        var resultError: Error?
-        var responseObject: Any?
-        
-        if let data = data, data.count > 0 {
-            do {
-                responseObject = try JSONSerialization.jsonObject(with: data, options: [])
-            } catch {
-                resultError = error
-            }
-        }
-        
-        if let response = response as? HTTPURLResponse, let validate = validate {
-            try validate(response, data, responseObject as? [String : Any])
-        }
-        if let error = resultError {
-            throw error
-        }
-        return responseObject
     }
     
     func setBody(request: inout URLRequest, logging: Bool) throws {
@@ -103,7 +83,7 @@ open class BaseRequest {
         var urlComponents = URLComponents(url: url, resolvingAgainstBaseURL: true)!
         
         if let params = parameters.parameters {
-            urlComponents.queryItems = params.map { URLQueryItem(name: $0.key, value: "\($0.value)") }
+            urlComponents.queryItems = params.store.map { URLQueryItem(name: $0.key, value: "\($0.value)") }
         }
         
         let requestUrl = urlComponents.url!
