@@ -73,7 +73,7 @@ open class NetworkProvider: NSObject, URLSessionTaskDelegate {
         }
     }
     
-    private let baseURL: URL
+    public let baseURL: URL
     public let auth: Auth?
     private let validate: ResponseValidation?
     private let session: URLSession
