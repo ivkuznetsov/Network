@@ -1,0 +1,14 @@
+{
+  "pins" : [
+    {
+      "identity" : "commonutils",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ivkuznetsov/CommonUtils.git",
+      "state" : {
+        "revision" : "23e91b377959f47a9ebc14679ae574e41e031e23",
+        "version" : "1.2.6"
+      }
+    }
+  ],
+  "version" : 2
+}

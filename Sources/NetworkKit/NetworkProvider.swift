@@ -15,7 +15,15 @@ public struct Token: Codable, Sendable {
     }
 }
 
-public typealias ResponseValidation = @Sendable (HTTPURLResponse, _ data: Data?, _ body: [String : Any]?) throws -> ()
+public protocol ResponsePage: Sendable {
+    
+    var values: [JSONDictionary] { get }
+    var nextOffset: Any? { get }
+    
+    init?(dict: JSONDictionary)
+}
+
+public typealias ResponseValidation = @Sendable (HTTPURLResponse, _ data: Data?, _ body: JSONDictionary?) throws -> ()
 
 open class NetworkProvider: NSObject, URLSessionTaskDelegate {
     
@@ -81,6 +89,8 @@ open class NetworkProvider: NSObject, URLSessionTaskDelegate {
     private let willSend: ((inout URLRequest)->())?
     private let willRedirect: ((URLSessionTask, HTTPURLResponse, URLRequest)->URLRequest?)?
     
+    @RWAtomic private var progress: [URLRequest: (Double)->()] = [:]
+    
     public init(baseURL: URL,
                 auth: Auth? = nil,
                 willSend: ((inout URLRequest)->())? = nil,
@@ -97,49 +107,137 @@ open class NetworkProvider: NSObject, URLSessionTaskDelegate {
         self.logging = logging
     }
     
-    open func load<T: BaseRequest & WithResponseType>(_ request: T, customToken: String? = nil, progress: ((Double)->())? = nil) async throws -> T.ResponseType {
+    private func commonLoad<Result>(_ request: Request,
+                                    progress: (@Sendable (Double)->())? = nil,
+                                    closure: (URLRequest, Request, _ description: inout String) async throws -> Result) async throws -> Result {
+        var (urlRequest, description) = try request.urlRequest(baseURL: baseURL)
         
-        request.validate = validate
-        
-        var urlRequest = request.urlRequest(baseURL: baseURL, logging: logging)
-        let token = request.parameters.auth ? (customToken ?? auth?.token?.auth) : nil
-        
-        if let token = token {
-            auth?.authorize(&urlRequest, token)
+        if let auth {
+            switch request.authentication {
+            case .customToken(let token): auth.authorize(&urlRequest, token)
+            case .use:
+                if let token = auth.token?.auth {
+                    auth.authorize(&urlRequest, token)
+                }
+            case .skip: break
+            }
         }
+        
         willSend?(&urlRequest)
         
-        if logging {
-            print("Sending \(urlRequest.url?.absoluteString ?? "")\nparameters: \((request.parameters.parameters?.store ?? [:]) as NSDictionary)\npayload: \((request.parameters.payload?.store ?? [:]) as NSDictionary)\nheaders: \(urlRequest.allHTTPHeaderFields as? NSDictionary ?? [:])")
+        if let progress = progress {
+            _progress.mutate { $0[urlRequest] = progress }
         }
         
+        let descriptionHeader = "\(UUID().uuidString.prefix(5)) \(urlRequest.httpMethod ?? "") \(urlRequest.url?.absoluteString ?? "")"
+        
+        if logging {
+            print("Sending:\n\(descriptionHeader)\n\(description)")
+        }
+        
+        var responseDescription = ""
+        
         do {
-            if let progress = progress {
-                _progress.mutate { $0[urlRequest] = progress }
-            }
-            
-            let result = try await request.load(session: session, request: urlRequest, delegate: self)
+            let result = try await closure(urlRequest, request, &responseDescription)
             
             _progress.mutate { $0[urlRequest] = nil }
             
             if logging == true {
-                print("Success \(request.parameters.endpoint), response: \(String(describing: result))")
+                print("Success:\n\(descriptionHeader)\nresponse:\n\(responseDescription)")
             }
             return result
         } catch {
+            _progress.mutate { $0[urlRequest] = nil }
+            
             if logging == true {
-                print("Failed \(request.parameters.endpoint), error: \(error.localizedDescription)")
+                print("Failed:\n\(descriptionHeader)\nerror:\n\(error.localizedDescription)\nresponse:\n\(responseDescription)")
             }
-            if customToken == nil, let auth = auth, request.parameters.auth {
-                try await auth.reauth(error, oldToken: token)
-                return try await load(request, progress: progress)
+            if case .use = request.authentication, let auth {
+                try await auth.reauth(error, oldToken: auth.token?.auth)
+                return try await commonLoad(request, progress: progress, closure: closure)
             } else {
                 throw error
             }
         }
     }
     
-    @RWAtomic private var progress: [URLRequest:(Double)->()] = [:]
+    struct ResultWithDescription<Result> {
+        let value: Result
+        let description: String?
+    }
+    
+    private func dataLoad<Result>(_ request: Request,
+                                  progress: (@Sendable (Double)->())? = nil,
+                                  process: @Sendable (Data, URLResponse, _ description: inout String) async throws -> Result) async throws -> Result {
+        
+        try await commonLoad(request, progress: progress) { urlRequest, request, description in
+            let (data, response) = switch request.payload {
+            case .uploadFile(let source):
+                switch source {
+                case .fileUrl(let url): try await session.upload(for: urlRequest, fromFile: url, delegate: self)
+                case .data(let data): try await session.upload(for: urlRequest, from: data, delegate: self)
+                }
+            default: try await session.data(for: urlRequest, delegate: self)
+            }
+            return try await process(data, response, &description)
+        }
+    }
+    
+    private func validate(_ response: URLResponse, dict: JSONDictionary? = nil, data: Data? = nil, description: inout String) throws {
+        var dict = dict
+        
+        if dict == nil, let data {
+            dict = try? JSONDecoder().decode(JSONDictionary.self, from: data)
+        }
+        description = "\(dict?.store as? NSDictionary ?? [:])"
+        
+        if let response = response as? HTTPURLResponse, let validate {
+            try validate(response, data, dict)
+        }
+    }
+    
+    open func send(_ request: Request, progress: (@Sendable (Double)->())? = nil) async throws {
+        try await dataLoad(request, progress: progress) { try validate($1, data: $0, description: &$2) }
+    }
+    
+    open func load(_ request: Request, progress: (@Sendable (Double)->())? = nil) async throws -> String {
+        try await dataLoad(request, progress: progress) {
+            try validate($1, data: $0, description: &$2)
+            
+            guard let string = String(data: $0, encoding: .utf8) else {
+                throw NetworkKitError.custom("Invalid response")
+            }
+            return string
+        }
+    }
+    
+    open func load<Result: Codable & Sendable>(_ request: Request, progress: (@Sendable (Double)->())? = nil) async throws -> Result {
+        try await dataLoad(request, progress: progress) {
+            let result = DecodedValue<Result>(data: $0)
+            try validate($1, dict: try? result.value() as? JSONDictionary, data: $0, description: &$2)
+            return try result.value()
+        }
+    }
+    
+    open func load<Result: ResponsePage>(_ request: Request, progress: (@Sendable (Double)->())? = nil) async throws -> Result {
+        try await dataLoad(request, progress: progress) {
+            let result = DecodedValue<JSONDictionary>(data: $0)
+            try validate($1, dict: try? result.value(), data: $0, description: &$2)
+            
+            guard let page = Result(dict: try result.value()) else {
+                throw NetworkKitError.custom("Cannot parse page")
+            }
+            return page
+        }
+    }
+    
+    open func download(_ request: Request, progress: (@Sendable (Double)->())? = nil) async throws -> URL {
+        try await commonLoad(request, progress: progress) { urlRequest, request, description -> URL in
+            let (url, response) = try await session.download(for: urlRequest, delegate: self)
+            try validate(response, description: &description)
+            return url
+        }
+    }
     
     public func urlSession(_ session: URLSession, didCreateTask task: URLSessionTask) {
         guard let reqeust = task.currentRequest, let progress = self.progress[reqeust] else { return }
@@ -160,6 +258,26 @@ open class NetworkProvider: NSObject, URLSessionTaskDelegate {
         if task.originalRequest?.httpBodyStream != nil {
             task.progress.totalUnitCount = totalBytesExpectedToSend
             task.progress.completedUnitCount = totalBytesSent
+        }
+    }
+}
+
+fileprivate enum DecodedValue<V: Codable> {
+    case value(V)
+    case error(Error)
+    
+    func value() throws -> V {
+        switch self {
+        case .value(let value): return value
+        case .error(let error): throw error
+        }
+    }
+    
+    init(data: Data) {
+        do {
+            self = .value(try JSONDecoder().decode(V.self, from: data))
+        } catch {
+            self = .error(error)
         }
     }
 }

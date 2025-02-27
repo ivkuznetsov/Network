@@ -8,83 +8,133 @@
 import Foundation
 import CommonUtils
 
-struct MultipartForm: Hashable, Equatable, Sendable {
+public struct MultipartParameter: Sendable {
     
-    let id = UUID().uuidString
-    let boundary: String
-    let parameters: JSONDictionary
-    let fileKey: String
-    let file: File
+    public enum Content {
+        case data(Data)
+        case file(header: Data, content: DataContent)
+    }
+    
+    public protocol Value: Sendable {
+        func content(key: String) -> Content
+    }
+    
+    public protocol JSONValue: Value, Codable { }
+    
+    let key: String
+    let value: Value
+    
+    public init(key: String, value: Value) {
+        self.key = key
+        self.value = value
+    }
+    
+    public init(file: File, fileKey: String = "file") {
+        self.key = fileKey
+        self.value = file
+    }
+}
+
+public extension MultipartParameter.JSONValue {
+    
+    func content(key: String) -> MultipartParameter.Content {
+        let jsonData = try! JSONEncoder().encode(self)
+        var data = Data()
+        data.append(key: key, mimeType: "\"application/json\"")
+        data.append(jsonData)
+        return .data(data)
+    }
+}
+
+extension JSONDictionary: MultipartParameter.JSONValue { }
+
+extension [JSONDictionary]: MultipartParameter.Value, MultipartParameter.JSONValue { }
+
+extension File: MultipartParameter.Value {
+    
+    public func content(key: String) -> MultipartParameter.Content {
+        var data = Data()
+        data.append(key: key, fileName: fileName, mimeType: mimeType)
+        
+        switch content {
+        case .data(let fileData):
+            return .file(header: data, content: .data(fileData))
+        case .fileUrl(let url):
+            return .file(header: data, content: .fileUrl(url))
+        }
+    }
+}
+
+extension String: MultipartParameter.Value {
+    
+    public func content(key: String) -> MultipartParameter.Content {
+        var data = Data()
+        data.append(key: key)
+        data.append(self)
+        return .data(data)
+    }
+}
+
+struct MultipartForm: CustomDebugStringConvertible {
+    
+    private let boundary: String
+    let stream: InputStream
+    let contentLength: Int
+    let debugDescription: String
     
     var contentType: String { "multipart/form-data; boundary=\(boundary)" }
     
-    func makeStream(logging: Bool) -> (stream: InputStream, contentLength: Int) {
-        var header = Data()
+    init(boundary: String = UUID().uuidString,
+         parameters: [MultipartParameter]) {
         
+        self.boundary = boundary
         var length: Int = 0
         
-        parameters.store.forEach { key, item in
-            header.append("--\(boundary)\r\n")
-            header.append("Content-Disposition:form-data; name=\"\(key)\"\r\n")
-            if let value = item.value as? String {
-                header.append("\r\n")
-                header.append(value)
-            } else if item.value is JSONDictionary || item.value is [JSONDictionary] {
-                if let value = try? JSONEncoder().encode(item) {
-                    header.append("Content-Type: \"application/json\"\r\n")
-                    header.append("\r\n")
-                    header.append(value)
-                }
-            } else if let value = item.value as? NSNumber {
-                header.append("\r\n")
-                header.append("\(value)")
-            }
-            header.append("\r\n")
-        }
+        var streams: [InputStream] = []
+        var data = Data()
+        var log = ""
         
-        header.append("--\(boundary)\r\n")
-        header.append("Content-Disposition:form-data; name=\"\(fileKey)\"; filename=\"\(file.fileName.replacingOccurrences(of: "\"", with: "_"))\"\r\n")
-        header.append("Content-Type: \(file.mimeType)\r\n")
-        header.append("\r\n")
-        
-        let headerStream = InputStream(data: header)
-        length += header.count
-        
-        let fileStream: InputStream
-        switch file.content {
-        case .data(let data):
-            fileStream = .init(data: data)
+        func commidData() {
             length += data.count
-        case .fileUrl(let url):
-            fileStream = .init(url: url)!
-            if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize {
-                length += size
+            
+            if let string = String(data: data, encoding: .utf8) {
+                log += string
             }
+            streams.append(.init(data: data))
+            data = Data()
         }
         
-        let footer = "\r\n--\(boundary)--\r\n".data(using: .utf8)!
-        length += footer.count
-        let footerStream = InputStream(data: footer)
-        
-        if logging {
-            print("Body:\n\(String(data: header, encoding: .utf8)!)[file data]\(String(data: footer, encoding: .utf8)!)")
+        parameters.forEach { parameter in
+            data.append("--\(boundary)\r\n")
+            
+            switch parameter.value.content(key: parameter.key) {
+            case .data(let parameterData):
+                data.append(parameterData)
+            case .file(let header, let content):
+                data.append(header)
+                commidData()
+                
+                switch content {
+                case .data(let fileData):
+                    data.append(fileData)
+                    log += "\n [file data \(fileData.count)]"
+                    commidData()
+                case .fileUrl(let url):
+                    streams.append(.init(url: url)!)
+                    let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                    length += size
+                    log += "\n [file data \(size)]"
+                }
+            }
+            data.append("\r\n")
         }
-        return (MultiStream(inputStreams: [headerStream, fileStream, footerStream]), length)
-    }
-    
-    public init(fileKey: String, file: File, parameters: JSONDictionary, boundary: String = UUID().uuidString) {
-        self.fileKey = fileKey
-        self.parameters = parameters
-        self.file = file
-        self.boundary = boundary
-    }
-    
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-    }
-    
-    static func == (lhs: MultipartForm, rhs: MultipartForm) -> Bool {
-        lhs.hashValue == rhs.hashValue
+        
+        data.append("--\(boundary)--\r\n")
+        commidData()
+        
+        stream = MultiStream(inputStreams: streams)
+        contentLength = length
+        debugDescription = log
     }
 }
 
@@ -93,86 +143,18 @@ fileprivate extension Data {
     mutating func append(_ string: String) {
         append(string.data(using: .utf8)!)
     }
-}
-
-fileprivate final class MultiStream: InputStream {
-
-    private var _delegate: (any StreamDelegate)?
-    override var delegate: (any StreamDelegate)? {
-        get { _delegate }
-        set { _delegate = newValue }
-    }
     
-    private var _streamError: Error?
-    override var streamError: Error? { _streamError }
-    
-    @RWAtomic private var _streamStatus: Stream.Status = .notOpen
-    override var streamStatus: Stream.Status { _streamStatus }
-    
-    init(inputStreams: [InputStream]) {
-        self.inputStreams = inputStreams
-        super.init()
-    }
-
-    private let inputStreams: [InputStream]
-    @RWAtomic private var currentIndex: Int = 0
-
-    override func open() {
-        _streamStatus = .opening
-        _streamStatus = .open
-        inputStreams[0].open()
-    }
-
-    override func close() {
-        inputStreams.forEach { $0.close() }
-        _streamStatus = .closed
-    }
-
-    override var hasBytesAvailable: Bool {
-        currentIndex < inputStreams.count
-    }
-
-    override func read(_ buffer: UnsafeMutablePointer<UInt8>, maxLength: Int) -> Int {
-        if _streamStatus == .closed { return 0 }
-
-        while currentIndex < inputStreams.count {
-            let currentInputStream = inputStreams[currentIndex]
-            
-            if currentInputStream.streamStatus == .notOpen {
-                currentInputStream.open()
-            }
-            
-            if !currentInputStream.hasBytesAvailable {
-                self.currentIndex += 1
-                continue
-            }
-            
-            let numberOfBytesRead = currentInputStream.read(buffer, maxLength: maxLength)
-                
-            if numberOfBytesRead == 0 {
-                self.currentIndex += 1
-                continue
-            }
-            
-            if numberOfBytesRead == -1 {
-                self._streamError = currentInputStream.streamError
-                self._streamStatus = .error
-                return -1
-            }
-            
-            return numberOfBytesRead
+    mutating func append(key: String, fileName: String? = nil, mimeType: String? = nil) {
+        append("Content-Disposition:form-data; name=\"\(key)\"")
+        
+        if let fileName {
+            append("; filename=\"\(fileName.replacingOccurrences(of: "\"", with: "_"))\"")
         }
-        return 0
+        append("\r\n")
+        
+        if let mimeType {
+            append("Content-Type: \(mimeType)\r\n")
+        }
+        append("\r\n")
     }
-    
-    override func getBuffer(_ buffer: UnsafeMutablePointer<UnsafeMutablePointer<UInt8>?>, length len: UnsafeMutablePointer<Int>) -> Bool { false }
-    
-    override func property(forKey key: Stream.PropertyKey) -> Any? { nil }
-
-    override func setProperty(_ property: Any?, forKey key: Stream.PropertyKey) -> Bool { false
-    }
-
-    override func schedule(in aRunLoop: RunLoop, forMode mode: RunLoop.Mode) { }
-
-    override func remove(from aRunLoop: RunLoop, forMode mode: RunLoop.Mode) { }
 }
