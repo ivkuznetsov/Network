@@ -34,6 +34,29 @@ open class NetworkProvider: NSObject, URLSessionTaskDelegate {
         let authorize: @Sendable (inout URLRequest, String)->()
         let refreshToken: (@Sendable (String) async throws -> Token)?
         let keychainService: String
+        private let loopChecker = LoopChecker()
+        
+        private actor LoopChecker {
+            
+            let maxCount = 5
+            
+            var count = 0
+            var latestCheckDate = Date()
+            
+            func checkLoop() throws {
+                if latestCheckDate.timeIntervalSinceNow < 1 {
+                    if count >= maxCount {
+                        count = 0
+                        throw RunError.custom("Authorization loop.")
+                    } else {
+                        count += 1
+                    }
+                } else {
+                    count = 0
+                }
+                latestCheckDate = Date()
+            }
+        }
         
         public init(relogin: @Sendable @escaping () async throws ->(),
                     unauthCodes: [Int] = [401, 403],
@@ -67,6 +90,7 @@ open class NetworkProvider: NSObject, URLSessionTaskDelegate {
                     if let refreshToken = refreshToken,
                        let token = token?.refresh {
                         do {
+                            try await loopChecker.checkLoop()
                             update(token: try await refreshToken(token))
                         } catch {
                             try await relogin()
