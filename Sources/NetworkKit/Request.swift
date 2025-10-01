@@ -148,7 +148,7 @@ public struct Request: Sendable {
         }
         
         if let params = parameters {
-            urlComponents.queryItems = params.map { URLQueryItem(name: $0.key, value: "\($0.value)") }
+            urlComponents.queryItems = (urlComponents.queryItems ?? []) + params.map { URLQueryItem(name: $0.key, value: "\($0.value)") }
         }
         
         guard let requestUrl = urlComponents.url else {
