@@ -23,6 +23,13 @@ public protocol ResponsePage: Sendable {
     init?(dict: JSONDictionary)
 }
 
+public struct ResponseWithHeaders<T: Codable & Sendable>: Sendable {
+    public let headers: Headers
+    public let response: T
+}
+
+public typealias Headers = [String: String]
+
 public typealias ResponseValidation = @Sendable (HTTPURLResponse, _ data: Data?, _ body: JSONDictionary?) throws -> ()
 
 open class NetworkProvider: NSObject, URLSessionTaskDelegate {
@@ -220,8 +227,12 @@ open class NetworkProvider: NSObject, URLSessionTaskDelegate {
         }
     }
     
-    open func send(_ request: Request, progress: (@Sendable (Double)->())? = nil) async throws {
-        try await dataLoad(request, progress: progress) { try validate($1, data: $0, description: &$2) }
+    @discardableResult
+    open func send(_ request: Request, progress: (@Sendable (Double)->())? = nil) async throws -> Headers {
+        try await dataLoad(request, progress: progress) {
+            try validate($1, data: $0, description: &$2)
+            return ($1 as? HTTPURLResponse)?.allHeaderFields as? [String: String] ?? [:]
+        }
     }
     
     open func load(_ request: Request, progress: (@Sendable (Double)->())? = nil) async throws -> String {
@@ -235,12 +246,19 @@ open class NetworkProvider: NSObject, URLSessionTaskDelegate {
         }
     }
     
-    open func load<Result: Codable & Sendable>(_ request: Request, progress: (@Sendable (Double)->())? = nil) async throws -> Result {
+    open func load<Result: Codable & Sendable>(_ request: Request, progress: (@Sendable (Double)->())? = nil) async throws -> ResponseWithHeaders<Result> {
         try await dataLoad(request, progress: progress) {
             let result = DecodedValue<Result>(data: $0)
             try validate($1, dict: try? result.value() as? JSONDictionary, data: $0, description: &$2)
-            return try result.value()
+            
+            let responseHeaders = ($1 as? HTTPURLResponse)?.allHeaderFields as? [String: String] ?? [:]
+            return try ResponseWithHeaders(headers: responseHeaders, response: result.value())
         }
+    }
+        
+    open func load<Result: Codable & Sendable>(_ request: Request, progress: (@Sendable (Double)->())? = nil) async throws -> Result {
+        let result: ResponseWithHeaders<Result> = try await load(request, progress: progress)
+        return result.response
     }
     
     open func load<Result: ResponsePage>(_ request: Request, progress: (@Sendable (Double)->())? = nil) async throws -> Result {
