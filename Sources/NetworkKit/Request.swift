@@ -138,7 +138,7 @@ public struct Request: Sendable {
         
         switch endpoint {
         case .relative(let string):
-            url = baseURL.appendingPathComponent(string)
+            url = baseURL.appendingRawPathComponent(string)
         case .absolute(let absoluteURL):
             url = absoluteURL
         }
@@ -148,7 +148,18 @@ public struct Request: Sendable {
         }
         
         if let params = parameters {
-            urlComponents.queryItems = (urlComponents.queryItems ?? []) + params.map { URLQueryItem(name: $0.key, value: "\($0.value)") }
+            var items: [URLQueryItem] = []
+            
+            for (key, value) in params {
+                if let value = value as? [URLParameter] {
+                    value.forEach {
+                        items.append(.init(name: key, value: "\($0)"))
+                    }
+                } else {
+                    items.append(.init(name: key, value: "\(value)"))
+                }
+            }
+            urlComponents.queryItems = items
         }
         
         guard let requestUrl = urlComponents.url else {
@@ -164,6 +175,19 @@ public struct Request: Sendable {
             description += "\npayload: \n\(bodyDescription)"
         }
         return (urlRequest, description)
+    }
+}
+
+extension URL {
+    
+    func appendingRawPathComponent(_ component: String) -> URL {
+        var base = absoluteString
+        let needsSlash = !base.hasSuffix("/") && !component.hasPrefix("/")
+
+        if base.hasSuffix("/") && component.hasPrefix("/") {
+            base = String(base.dropLast())
+        }
+        return URL(string: needsSlash ? (base + "/" + component) : (base + component))!
     }
 }
 
