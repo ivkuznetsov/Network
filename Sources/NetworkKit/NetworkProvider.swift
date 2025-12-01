@@ -89,8 +89,7 @@ open class NetworkProvider: NSObject, URLSessionTaskDelegate {
         }
         
         func reauth(_ error: Error, oldToken: String?) async throws {
-            let currentToken = token?.auth
-            if let currentToken, currentToken != oldToken { return } // already updated
+            if token?.auth != oldToken { return } // already updated
             
             try await SingletonTasks.run(key: "reauth") {
                 if unauthCodes.contains((error as NSError).code) {
@@ -143,32 +142,33 @@ open class NetworkProvider: NSObject, URLSessionTaskDelegate {
                                     closure: (URLRequest, Request, _ description: inout String) async throws -> Result) async throws -> Result {
         var (urlRequest, description) = try request.urlRequest(baseURL: baseURL)
         
-        if let auth {
-            switch request.authentication {
-            case .customToken(let token): auth.authorize(&urlRequest, token)
-            case .use:
-                if let token = auth.token?.auth {
-                    auth.authorize(&urlRequest, token)
-                }
-            case .skip: break
-            }
-        }
-        
-        willSend?(&urlRequest)
-        
-        if let progress = progress {
-            _progress.mutate { $0[urlRequest] = progress }
-        }
-        
         let descriptionHeader = "\(UUID().uuidString.prefix(5)) \(urlRequest.httpMethod ?? "") \(urlRequest.url?.absoluteString ?? "")"
-        
-        if logging {
-            print("Sending:\n\(descriptionHeader)\n\(description)")
-        }
-        
         var responseDescription = ""
         
         do {
+            if let auth {
+                switch request.authentication {
+                case .customToken(let token): auth.authorize(&urlRequest, token)
+                case .use:
+                    if let token = auth.token?.auth {
+                        auth.authorize(&urlRequest, token)
+                    } else {
+                        throw NSError(domain: "no token", code: 401)
+                    }
+                case .skip: break
+                }
+            }
+            
+            willSend?(&urlRequest)
+            
+            if let progress = progress {
+                _progress.mutate { $0[urlRequest] = progress }
+            }
+            
+            if logging {
+                print("Sending:\n\(descriptionHeader)\n\(description)")
+            }
+            
             let result = try await closure(urlRequest, request, &responseDescription)
             
             _progress.mutate { $0[urlRequest] = nil }
