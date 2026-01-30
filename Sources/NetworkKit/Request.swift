@@ -71,7 +71,7 @@ public struct Request: Sendable {
     
     public init(endpoint: Endpoint,
                 method: HTTPMethod = .get,
-                parameters: [String: URLParameter] = [:],
+                parameters: [String: URLParameter]? = nil,
                 headers: [String: String] = [:],
                 payload: Payload? = nil,
                 authentication: Authentication = .use) {
@@ -86,7 +86,7 @@ public struct Request: Sendable {
     
     public init(endpoint: String,
                 method: HTTPMethod = .get,
-                parameters: [String: URLParameter] = [:],
+                parameters: [String: URLParameter]? = nil,
                 headers: [String: String] = [:],
                 payload: Payload? = nil,
                 authentication: Authentication = .use) {
@@ -159,7 +159,7 @@ public struct Request: Sendable {
                     items.append(.init(name: key, value: "\(value)"))
                 }
             }
-            urlComponents.queryItems = items
+            urlComponents.queryItems = items.isEmpty ? nil : items
         }
         
         guard let requestUrl = urlComponents.url else {
