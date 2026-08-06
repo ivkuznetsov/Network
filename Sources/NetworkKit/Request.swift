@@ -51,6 +51,7 @@ public struct Request: Sendable {
     
     public enum Payload: Sendable {
         case json(JSONDictionary)
+        case jsonData(Data)
         case multipart([MultipartParameter])
         case urlForm([String: String])
         case uploadFile(source: DataContent)
@@ -103,6 +104,9 @@ public struct Request: Sendable {
         case .json(let dictionary):
             payloadDescription = "\(dictionary.store as NSDictionary)"
             request.httpBody = try JSONEncoder().encode(dictionary)
+            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        case .jsonData(let data):
+            request.httpBody = data
             request.addValue("application/json", forHTTPHeaderField: "Content-Type")
         case .multipart(let parameters):
             let form = MultipartForm(parameters: parameters)
