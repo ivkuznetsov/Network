@@ -8,7 +8,7 @@
 import Foundation
 import CommonUtils
 
-public enum HTTPMethod: String, Sendable {
+public enum HTTPMethod: String, Sendable, Codable {
     case get, post, put, delete, patch
 }
 
